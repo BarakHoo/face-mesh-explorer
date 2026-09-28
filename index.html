@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>זיהוי פנים - 25 תרשימים</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+            font-size: 2em;
+            text-align: center;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 20px;
+            border-radius: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            font-weight: bold;
+            z-index: 1000;
+            transition: opacity 0.3s ease;
+            font-size: 14px;
+        }
+
+        .status.loading { color: #f39c12; }
+        .status.ready { color: #27ae60; }
+        .status.error { color: #e74c3c; }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 220px;
+            gap: 15px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .main-area {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .displays {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .box {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+
+        .box-title {
+            text-align: center;
+            margin-bottom: 8px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            display: block;
+            background: black;
+        }
+
+        canvas {
+            width: 100%;
+            border-radius: 8px;
+            display: block;
+            background: black;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .info-item {
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #764ba2;
+            font-weight: bold;
+        }
+
+        .sidebar {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            height: calc(100vh - 60px);
+            overflow-y: auto;
+            position: sticky;
+            top: 20px;
+        }
+
+        .sidebar h3 {
+            color: #667eea;
+            margin-bottom: 12px;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            background: white;
+            padding: 8px 0;
+            z-index: 10;
+            font-size: 16px;
+        }
+
+        .mode-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .mode-btn {
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: right;
+        }
+
+        .mode-btn:hover {
+            transform: translateX(-3px);
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .mode-btn:not(.active) {
+            background: #f8f9fa;
+            color: #333;
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎭 זיהוי פנים - 25 תרשימים שונים</h1>
+    
+    <div class="status loading" id="status">טוען...</div>
+
+    <div class="container">
+        <div class="main-area">
+            <div class="displays">
+                <div class="box">
+                    <div class="box-title" style="color: #667eea;">📹 וידאו חי</div>
+                    <video id="videoElement" autoplay playsinline width="320" height="240"></video>
+                </div>
+
+                <div class="box">
+                    <div class="box-title" style="color: #764ba2;">🎨 תרשים</div>
+                    <canvas id="canvas" width="640" height="480"></canvas>
+                </div>
+            </div>
+
+            <div class="box">
+                <div class="box-title" style="color: #667eea;">📊 מידע</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">פנים:</span>
+                        <span class="info-value" id="faceCount">0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">נקודות:</span>
+                        <span class="info-value" id="landmarkCount">0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">FPS:</span>
+                        <span class="info-value" id="fps">0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">מצב:</span>
+                        <span class="info-value" id="detectionStatus">ממתין</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <h3>🎨 תרשימים</h3>
+            <div class="mode-buttons" id="modeButtons"></div>
+        </div>
+    </div>
+
+    <script>
+        const modes = [
+            {id: 'full', name: '🌟 מלא', desc: 'כל הנקודות'},
+            {id: 'wireframe', name: '📐 שלד תיל', desc: ''},
+            {id: 'mesh3d', name: '🎭 רשת 3D', desc: 'כמו בתמונה'},
+            {id: 'contours', name: '🎭 קווי מתאר', desc: ''},
+            {id: 'minimal', name: '⚡ מינימלי', desc: ''},
+            {id: 'neon', name: '💫 ניאון', desc: ''},
+            {id: 'xray', name: '🩻 רנטגן', desc: ''},
+            {id: 'thermal', name: '🌡️ תרמוגרפיה', desc: ''},
+            {id: 'sketch', name: '✏️ סקיצה', desc: ''},
+            {id: 'matrix', name: '💚 מטריקס', desc: ''},
+            {id: 'galaxy', name: '🌌 גלקסיה', desc: ''},
+            {id: 'fire', name: '🔥 אש', desc: ''},
+            {id: 'ice', name: '❄️ קרח', desc: ''},
+            {id: 'hologram', name: '👽 הולוגרמה', desc: ''},
+            {id: 'particle', name: '✨ חלקיקים', desc: ''},
+            {id: 'vapor', name: '🌊 אדים', desc: ''},
+            {id: 'rainbow', name: '🌈 קשת', desc: ''},
+            {id: 'circuit', name: '⚡ מעגל', desc: ''},
+            {id: 'constellation', name: '⭐ כוכבים', desc: ''},
+            {id: 'paint', name: '🎨 צבעי מים', desc: ''},
+            {id: 'cyber', name: '🤖 סייבר', desc: ''},
+            {id: 'plasma', name: '🔮 פלזמה', desc: ''},
+            {id: 'digital', name: '💻 דיגיטלי', desc: ''},
+            {id: 'aurora', name: '🌠 אורורה', desc: ''},
+            {id: 'retro', name: '📺 רטרו', desc: ''},
+            {id: 'liquid', name: '💧 נוזל', desc: ''}
+        ];
+
+        // יצירת כפתורים
+        const buttonsContainer = document.getElementById('modeButtons');
+        modes.forEach((mode, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'mode-btn' + (index === 0 ? ' active' : '');
+            btn.textContent = mode.name;
+            btn.onclick = () => setMode(mode.id, btn);
+            buttonsContainer.appendChild(btn);
+        });
+
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const faceCountEl = document.getElementById('faceCount');
+        const landmarkCountEl = document.getElementById('landmarkCount');
+        const fpsEl = document.getElementById('fps');
+        const detectionStatusEl = document.getElementById('detectionStatus');
+
+        let model, lastTime = Date.now(), frameCount = 0, currentMode = 'full', animationTime = 0, particles = [];
+
+        function setMode(mode, btn) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            particles = []; // איפוס חלקיקים
+        }
+
+        function updateStatus(message, type) {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+            if (type === 'ready') {
+                setTimeout(() => {
+                    statusEl.style.opacity = '0';
+                    setTimeout(() => statusEl.style.display = 'none', 300);
+                }, 3000);
+            }
+        }
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, facingMode: 'user' }, audio: false
+            });
+            video.srcObject = stream;
+            return new Promise(resolve => {
+                video.onloadedmetadata = () => { video.play(); resolve(video); };
+            });
+        }
+
+        async function loadModel() {
+            updateStatus('טוען מודל...', 'loading');
+            model = await faceLandmarksDetection.createDetector(
+                faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+                { runtime: 'mediapipe', solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh', refineLandmarks: true, maxFaces: 3 }
+            );
+            updateStatus('✅ מוכן!', 'ready');
+        }
+
+        function drawFaces(predictions) {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            animationTime += 0.05;
+
+            if (!predictions || predictions.length === 0) {
+                detectionStatusEl.textContent = 'אין פנים';
+                faceCountEl.textContent = '0';
+                landmarkCountEl.textContent = '0';
+                ctx.fillStyle = '#666';
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('ממתין...', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+
+            detectionStatusEl.textContent = 'מזהה';
+            faceCountEl.textContent = predictions.length;
+            let totalLandmarks = 0;
+
+            predictions.forEach((pred, idx) => {
+                const keypoints = pred.keypoints;
+                totalLandmarks += keypoints.length;
+                const scaleX = canvas.width / video.videoWidth;
+                const scaleY = canvas.height / video.videoHeight;
+                const colors = ['#00ff00', '#ff00ff', '#00ffff', '#ffff00', '#ff8800'];
+                const color = colors[idx % colors.length];
+
+                // קריאה למצב מתאים
+                eval(`draw${currentMode.charAt(0).toUpperCase() + currentMode.slice(1)}Mode(keypoints, color, scaleX, scaleY)`);
+            });
+
+            landmarkCountEl.textContent = totalLandmarks;
+        }
+
+        // פונקציות ציור מצבים - מקוצרות
+        function drawFullMode(kp, c, sx, sy) {
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillStyle = c + '30';
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = c;
+                ctx.beginPath();
+                ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            drawContours(kp, c, sx, sy);
+        }
+
+        function drawWireframeMode(kp, c, sx, sy) {
+            ctx.strokeStyle = c + '50';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i < kp.length - 1; i++) {
+                const p1 = kp[i], p2 = kp[i + 1];
+                const x1 = (video.videoWidth - p1.x) * sx, y1 = p1.y * sy;
+                const x2 = (video.videoWidth - p2.x) * sx, y2 = p2.y * sy;
+                const d = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                if (d < 12) {
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function drawMesh3dMode(kp, c, sx, sy) {
+            // רקע שחור
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // רשת משולשים לבנה דקה
+            ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)';
+            ctx.lineWidth = 0.8;
+            
+            // יצירת רשת צפופה של משולשים
+            for (let i = 0; i < kp.length; i++) {
+                for (let j = i + 1; j < kp.length; j++) {
+                    const p1 = kp[i], p2 = kp[j];
+                    const x1 = (video.videoWidth - p1.x) * sx, y1 = p1.y * sy;
+                    const x2 = (video.videoWidth - p2.x) * sx, y2 = p2.y * sy;
+                    const d = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                    
+                    // רק קווים קצרים ליצירת רשת צפופה
+                    if (d < 15) {
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            // נקודות צומת לבנות קטנות
+            ctx.fillStyle = '#ffffff';
+            kp.forEach((p) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.beginPath();
+                ctx.arc(x, y, 1, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            
+            // עיניים ירוקות זוהרות - נקודות ספציפיות לעיניים
+            const leftEyeIndices = [33, 133, 160, 159, 158, 157, 173, 246];
+            const rightEyeIndices = [362, 263, 387, 386, 385, 384, 398, 466];
+            
+            // זוהר ירוק לעיניים
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00ff00';
+            
+            // עין שמאל
+            ctx.fillStyle = '#00ff00';
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            leftEyeIndices.forEach((idx, i) => {
+                if (kp[idx]) {
+                    const x = (video.videoWidth - kp[idx].x) * sx, y = kp[idx].y * sy;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+            });
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fill();
+            
+            // עין ימין
+            ctx.beginPath();
+            rightEyeIndices.forEach((idx, i) => {
+                if (kp[idx]) {
+                    const x = (video.videoWidth - kp[idx].x) * sx, y = kp[idx].y * sy;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+            });
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fill();
+            
+            // ציור נקודות ירוקות גדולות במרכז העיניים
+            [468, 473].forEach(idx => {
+                // שימוש בנקודות מרכז העיניים מהמודל
+                const eyeCenter = idx === 468 ? 
+                    kp[leftEyeIndices[0]] : 
+                    kp[rightEyeIndices[0]];
+                
+                if (eyeCenter) {
+                    const x = (video.videoWidth - eyeCenter.x) * sx;
+                    const y = eyeCenter.y * sy;
+                    
+                    // זוהר חיצוני
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 12, 0, 2 * Math.PI);
+                    ctx.fill();
+                    
+                    // זוהר בינוני
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                    ctx.fill();
+                    
+                    // נקודה מרכזית
+                    ctx.fillStyle = '#00ff00';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+            
+            ctx.shadowBlur = 0;
+        }
+
+        function drawContoursMode(kp, c, sx, sy) {
+            ctx.strokeStyle = c;
+            ctx.lineWidth = 2;
+            drawContours(kp, c, sx, sy);
+        }
+
+        function drawMinimalMode(kp, c, sx, sy) {
+            [10, 152, 234, 454, 389, 159, 386, 2, 61, 291].forEach(idx => {
+                if (kp[idx]) {
+                    const x = (video.videoWidth - kp[idx].x) * sx, y = kp[idx].y * sy;
+                    ctx.fillStyle = c + '40';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = c;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+        }
+
+        function drawNeonMode(kp, c, sx, sy) {
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = c;
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillStyle = c;
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+            drawContours(kp, c, sx, sy);
+        }
+
+        function drawXrayMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ccc';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i < kp.length; i++) {
+                for (let j = i + 1; j < kp.length; j++) {
+                    const x1 = (video.videoWidth - kp[i].x) * sx, y1 = kp[i].y * sy;
+                    const x2 = (video.videoWidth - kp[j].x) * sx, y2 = kp[j].y * sy;
+                    const d = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                    if (d < 8) {
+                        ctx.globalAlpha = 0.2;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                    }
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        function drawThermalMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000033';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const hue = (1 - y / canvas.height) * 240;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, 15);
+                g.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
+                g.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(x, y, 15, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawSketchMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#f5f5dc';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            drawContours(kp, '#333', sx, sy);
+        }
+
+        function drawMatrixMode(kp, c, sx, sy) {
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00ff00';
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillStyle = '#00ff00';
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        function drawGalaxyMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000011';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const hue = (i / kp.length * 360 + animationTime * 50) % 360;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, 10);
+                g.addColorStop(0, `hsla(${hue}, 100%, 70%, 1)`);
+                g.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(x, y, 10, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawFireMode(kp, c, sx, sy) {
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const heat = 1 - y / canvas.height;
+                const hue = heat * 60;
+                const g = ctx.createRadialGradient(x, y, 0, x, y, 20);
+                g.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.9)`);
+                g.addColorStop(1, `hsla(${hue}, 100%, 30%, 0)`);
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(x, y + Math.sin(animationTime + i) * 5, 20, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawIceMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#001133';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.strokeStyle = `rgba(150, 200, 255, ${0.3 + Math.sin(animationTime + i) * 0.2})`;
+                ctx.lineWidth = 2;
+                for (let j = 0; j < 6; j++) {
+                    const a = (j / 6) * Math.PI * 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + Math.cos(a) * 8, y + Math.sin(a) * 8);
+                    ctx.stroke();
+                }
+            });
+        }
+
+        function drawHologramMode(kp, c, sx, sy) {
+            for (let i = 0; i < canvas.height; i += 4) {
+                ctx.strokeStyle = 'rgba(0,255,255,0.1)';
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(canvas.width, i);
+                ctx.stroke();
+            }
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00ffff';
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillStyle = '#00ffff';
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        function drawParticleMode(kp, c, sx, sy) {
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                if (Math.random() > 0.7) {
+                    particles.push({x, y, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, life: 1, hue: (i / kp.length * 360) % 360});
+                }
+            });
+            particles = particles.filter(p => p.life > 0);
+            particles.forEach(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                ctx.fillStyle = `hsla(${p.hue}, 100%, 50%, ${p.life})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawVaporMode(kp, c, sx, sy) {
+            const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            g.addColorStop(0, '#1a0033');
+            g.addColorStop(0.5, '#330066');
+            g.addColorStop(1, '#660099');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx + Math.sin(animationTime + i * 0.1) * 5;
+                const y = p.y * sy;
+                const gr = ctx.createRadialGradient(x, y, 0, x, y, 30);
+                gr.addColorStop(0, 'rgba(255,100,255,0.6)');
+                gr.addColorStop(1, 'rgba(100,150,255,0)');
+                ctx.fillStyle = gr;
+                ctx.beginPath();
+                ctx.arc(x, y, 30, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawRainbowMode(kp, c, sx, sy) {
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const hue = (i / kp.length * 360 + animationTime * 100) % 360;
+                ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawCircuitMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#0a1a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < kp.length - 1; i++) {
+                const x1 = (video.videoWidth - kp[i].x) * sx, y1 = kp[i].y * sy;
+                const x2 = (video.videoWidth - kp[i+1].x) * sx, y2 = kp[i+1].y * sy;
+                if (Math.sqrt((x2-x1)**2 + (y2-y1)**2) < 15) {
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.stroke();
+                    // נקודות חיבור
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fillRect(x1-2, y1-2, 4, 4);
+                }
+            }
+        }
+
+        function drawConstellationMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000011';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // כוכבים ברקע
+            for (let i = 0; i < 100; i++) {
+                ctx.fillStyle = `rgba(255,255,255,${Math.random()})`;
+                ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 1, 1);
+            }
+            // קווים בין נקודות
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < kp.length; i++) {
+                for (let j = i + 1; j < kp.length; j++) {
+                    const x1 = (video.videoWidth - kp[i].x) * sx, y1 = kp[i].y * sy;
+                    const x2 = (video.videoWidth - kp[j].x) * sx, y2 = kp[j].y * sy;
+                    if (Math.sqrt((x2-x1)**2 + (y2-y1)**2) < 40) {
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                    }
+                }
+            }
+            // כוכבים
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawPaintMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#fffff0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const hue = (i / kp.length * 360) % 360;
+                const gr = ctx.createRadialGradient(x, y, 0, x, y, 20);
+                gr.addColorStop(0, `hsla(${hue}, 70%, 60%, 0.4)`);
+                gr.addColorStop(1, `hsla(${hue}, 70%, 60%, 0)`);
+                ctx.fillStyle = gr;
+                ctx.beginPath();
+                ctx.arc(x, y, 20, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawCyberMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // רשת רקע
+            ctx.strokeStyle = 'rgba(0,255,255,0.1)';
+            for (let i = 0; i < canvas.width; i += 20) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+            for (let i = 0; i < canvas.height; i += 20) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(canvas.width, i);
+                ctx.stroke();
+            }
+            // נקודות
+            ctx.fillStyle = '#00ffff';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffff';
+            kp.forEach(p => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillRect(x-2, y-2, 4, 4);
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        function drawPlasmaMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                const hue = (animationTime * 100 + i * 10) % 360;
+                const gr = ctx.createRadialGradient(x, y, 0, x, y, 25);
+                gr.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
+                gr.addColorStop(0.5, `hsla(${(hue + 60) % 360}, 100%, 50%, 0.4)`);
+                gr.addColorStop(1, `hsla(${(hue + 120) % 360}, 100%, 50%, 0)`);
+                ctx.fillStyle = gr;
+                ctx.beginPath();
+                ctx.arc(x, y, 25, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawDigitalMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#0f0';
+            ctx.font = '10px monospace';
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx, y = p.y * sy;
+                ctx.fillText(i.toString(2).padStart(8, '0'), x, y);
+            });
+        }
+
+        function drawAuroraMode(kp, c, sx, sy) {
+            const gr = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gr.addColorStop(0, '#001a33');
+            gr.addColorStop(1, '#000a1a');
+            ctx.fillStyle = gr;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx;
+                const y = p.y * sy + Math.sin(animationTime + i * 0.1) * 10;
+                const hue = (120 + Math.sin(animationTime + i * 0.05) * 60);
+                const gr2 = ctx.createRadialGradient(x, y, 0, x, y, 40);
+                gr2.addColorStop(0, `hsla(${hue}, 100%, 60%, 0.6)`);
+                gr2.addColorStop(1, `hsla(${hue}, 100%, 40%, 0)`);
+                ctx.fillStyle = gr2;
+                ctx.beginPath();
+                ctx.arc(x, y, 40, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawRetroMode(kp, c, sx, sy) {
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // קווי סריקה
+            for (let i = 0; i < canvas.height; i += 2) {
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(0, i, canvas.width, 1);
+            }
+            // נקודות פיקסליות
+            const colors = ['#ff00ff', '#00ffff', '#ffff00'];
+            kp.forEach((p, i) => {
+                const x = Math.floor((video.videoWidth - p.x) * sx / 4) * 4;
+                const y = Math.floor(p.y * sy / 4) * 4;
+                ctx.fillStyle = colors[i % 3];
+                ctx.fillRect(x, y, 4, 4);
+            });
+        }
+
+        function drawLiquidMode(kp, c, sx, sy) {
+            ctx.fillStyle = 'rgba(0,20,40,0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            kp.forEach((p, i) => {
+                const x = (video.videoWidth - p.x) * sx;
+                const y = p.y * sy + Math.sin(animationTime * 2 + i * 0.1) * 15;
+                const hue = (200 + i * 2) % 360;
+                const gr = ctx.createRadialGradient(x, y, 0, x, y, 35);
+                gr.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.7)`);
+                gr.addColorStop(0.5, `hsla(${hue}, 100%, 40%, 0.4)`);
+                gr.addColorStop(1, `hsla(${hue}, 100%, 30%, 0)`);
+                ctx.fillStyle = gr;
+                ctx.beginPath();
+                ctx.arc(x, y, 35, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                // טיפות
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.3)`;
+                ctx.beginPath();
+                ctx.arc(x, y + 20, 5, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function drawContours(kp, c, sx, sy) {
+            const contours = [
+                [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109],
+                [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7],
+                [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382],
+                [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]
+            ];
+            ctx.strokeStyle = c;
+            ctx.lineWidth = 1;
+            contours.forEach(cont => {
+                ctx.beginPath();
+                cont.forEach((idx, i) => {
+                    if (kp[idx]) {
+                        const x = (video.videoWidth - kp[idx].x) * sx, y = kp[idx].y * sy;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                });
+                ctx.stroke();
+            });
+        }
+
+        function calculateFPS() {
+            frameCount++;
+            const currentTime = Date.now();
+            if (currentTime - lastTime >= 1000) {
+                fpsEl.textContent = Math.round((frameCount * 1000) / (currentTime - lastTime));
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+        }
+
+        async function detectFaces() {
+            if (model && video.readyState === 4) {
+                try {
+                    const predictions = await model.estimateFaces(video);
+                    drawFaces(predictions);
+                    calculateFPS();
+                } catch (error) {
+                    console.error('Error:', error);
+                }
+            }
+            requestAnimationFrame(detectFaces);
+        }
+
+        async function init() {
+            try {
+                await setupCamera();
+                await loadModel();
+                detectFaces();
+            } catch (error) {
+                updateStatus('שגיאה: ' + error.message, 'error');
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
